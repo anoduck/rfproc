@@ -1,6 +1,6 @@
 <h1 align="center">Welcome to rfproc 👋</h1>
 <p>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.0.8-blue.svg?cacheSeconds=2592000" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-blue.svg?cacheSeconds=2592000" />
   <a href="#" target="_blank">
     <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
   </a>
@@ -22,7 +22,7 @@ cp rfproc ~/.local/bin
 
 ```sh
 Program : rfproc  by 11767-anoduck@users.noreply.gitgud.io
-Version : v0.0.8 (2024-04-17 02:42)
+Version : v0.1.0 (2024-04-17 02:42)
 Purpose : A script to aid processing of rtl_433 generated files
 Usage   : rfproc [-h] [-q] [-v] [-f] [-l <log_dir>] [-t <tmp_dir>] [-i <input>] [-i <script>] <action>
 Flags, options and parameters:
