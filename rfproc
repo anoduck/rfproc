@@ -8,7 +8,7 @@
 
 ### Created by anoduck ( anoduck ) on 2024-03-29
 ### Based on https://github.com/pforret/bashew 1.20.5
-script_version="0.1.0" # if there is a VERSION.md in this script's folder, that will have priority over this version number
+script_version="0.0.8" # if there is a VERSION.md in this script's folder, that will have priority over this version number
 readonly script_author="11767-anoduck@users.noreply.gitgud.io"
 readonly script_created="2024-03-29"
 readonly run_as_root=-1 # run_as_root: 0 = don't check anything / 1 = script MUST run as root / -1 = script MAY NOT run as root
@@ -195,30 +195,28 @@ gendecode() {
     for tf in $($FCMD -t f -e txt --base-directory "$input"); do
       # Again nice work on the awk
       MODNAME="mod-flex$g"
-      ARGSF=$(grep "\-X\ " "$tf" | awk -F " " '{print $7}' | awk -F "," -v modname="n=$MODNAME" '{print gensub("n=name", modname, "G")}')
+      ARGSF=$(grep "\-X\ " "$tf" | awk -F " " -v modname="n=$MODNAME" '{f=gensub("n=name", modnam, "G"); print substr($7,2,length($7)-2)}')
       if [[ ${#ARGSF} -gt 6 ]]; then
         JSONFILE="$DECODEFILE-$MODNAME.json"
-        RUNCMD="rtl_433 -r $i -X $ARGSF -F json:$JSONFILE"
-        writetosh "$RUNCMD" "$WRIT2FILE"
+        RUNCMD="/usr/local/bin/rtl_433 -r $i -X $ARGSF -F json:$JSONFILE"
         # -----------------------------------------
         # Below is the bit that doesn't work yet.
         # Mostly, the rundecoder function.
         # -----------------------------------------
-        # rundecoder "$i" "$ARGSF" "$JSONFILE"
-        # if rundecoder; then
-        #   IO:log "Decoder ran successfully on: $i"
-        #   ((c++))
-        # else
-        #   IO:log "Module name is: $MODNAME"
-        #   IO:log "Flex Decoder String: $ARGSF"
-        #   IO:log "File to decode is: $i"
-        #   IO:log "Decoder failed miserably on: $i"
-        #   IO:log "File to write results to: $JSONFILE"
-        #   RUNCMD="rtl_433 -r $i -X $ARGSF -F json:$JSONFILE"
-        #   writetosh "$RUNCMD" "$WRIT2FILE"
-        #   IO:log "Command to test is: $RUNCMD"
-        #   ((e++))
-        # fi
+        rundecoder "$i" "$ARGSF" "$JSONFILE"
+        if rundecoder; then
+          IO:log "Decoder ran successfully on: $i"
+          ((c++))
+        else
+          IO:log "Module name is: $MODNAME"
+          IO:log "Flex Decoder String: $ARGSF"
+          IO:log "File to decode is: $i"
+          IO:log "Decoder failed miserably on: $i"
+          IO:log "File to write results to: $JSONFILE"
+          writetosh "$RUNCMD" "$WRIT2FILE"
+          IO:log "Command to test is: $RUNCMD"
+          ((e++))
+        fi
       else
         IO:log "Attempted flex decoder was: $ARGSF"
         IO:log "Unable to find flex decoder snippet in $tf"
@@ -252,7 +250,7 @@ function do_proc() {
   # our main loop
   echo "This command is buggy and will generate alot of output!"
   echo "Press CTRL-c twice to cancel"
-  sleep 5
+  sleep 2
   # first a set of common file types
   c=0
   e=0
@@ -307,8 +305,8 @@ function do_clean() {
   # (code)
   echo "This will remove all ook, txt, sh, and json files from the current directory."
   echo "Press CTRL-c twice to cancel"
-  echo " You have 10 seconds to cancel."
-  sleep 10
+  echo " You have 3 seconds to cancel."
+  sleep 3
   get_find
   $FCMD -t f -e ook --base-directory "$input" -x rm {}
   $FCMD -t f -e txt --base-directory "$input" -x rm {}
