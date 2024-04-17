@@ -49,11 +49,11 @@ flag|h|help|show usage
 flag|q|quiet|no output
 flag|v|verbose|also show debug messages
 flag|f|force|do not ask for confirmation (always yes)
-flag|b|batch|perform batch processing in current directory
 option|l|log_dir|folder for log files |$HOME/log/$script_prefix
 option|t|tmp_dir|folder for temp files|/tmp/$script_prefix
 option|i|input|input folder for processing|$PWD
-choice|1|action|action to perform|proc,clean,check,env,update
+option|i|script|name of shell script to write demod commands to|$script_prefix.sh
+choice|1|action|action to perform|proc,decode,convert,clean,check,env,update
 " -v -e '^#' -e '^\s*$'
 }
 
@@ -71,6 +71,18 @@ function Script:main() {
       #TIP: use «$script_prefix proc» to ...
       #TIP:> $script_prefix proc
       do_proc
+      ;;
+
+    decode)
+      #TIP: use «$script_prefix clean» to ...
+      #TIP:> $script_prefix clean
+      do_decode
+      ;;
+
+    convert)
+      #TIP: use «$script_prefix clean» to ...
+      #TIP:> $script_prefix clean
+      do_convert
       ;;
 
     clean)
@@ -129,13 +141,15 @@ setoutput() {
   REVFILE="$LABEL-output.txt"
 	OOKFILE="$LABEL.ook"
   DECODEFILE="$LABEL-decode"
+  # WRIT2FILE="$LABEL-$c.sh"
+  WRIT2FILE="$script"
 }
 
 genook() {
   if [[ -e "$OOKFILE" ]]; then
-    rtl_433 -W ook:"$OOKFILE" "$i"
+    /usr/local/bin/rtl_433 -W ook:"$OOKFILE" "$i"
   else
-    rtl_433 -w ook:"$OOKFILE" "$i"
+    /usr/local/bin/rtl_433 -w ook:"$OOKFILE" "$i"
   fi
   LENOOK=$(echo "$OOKFILE" | wc -l)
   if [[ "$LENOOK" -lt 4 ]]; then
@@ -146,18 +160,35 @@ genook() {
 examfile() {
   # exec 3>&1
   # exec 4>&2
-  REVOUT=$(rtl_433 -A "$i" 2>&1)
+  REVOUT=$(/usr/local/bin/rtl_433 -A "$i" 2>&1)
   if [[ -n "$REVOUT" ]]; then
     ACOUNT=$(echo "$REVOUT" | wc -l)
     if [[ $ACOUNT -gt 2 ]]; then
       # Nice work on AWK command
       echo "$REVOUT" | awk -v TFLE="$TXTFILE" -v RS="" '{
-      print > (TFLE NR ".txt");
+      f=TFLE NR ".txt"
+      print > f;
+      close(f);
       }' -;
     fi
   else
     ((e++))
     IO:log "Processing ${i} resulted in empty string"
+  fi
+}
+
+rundecoder() {
+  /usr/local/bin/rtl_433 -r "$i" -X "$ARGSF" -F json:"$JSONFILE"
+}
+
+writetosh() {
+  # Basically, until I discover why the script is failing to execute,
+  # write failed processing commands to file to be executed separately.
+  if [[ -e "$WRIT2FILE" ]]; then
+    echo "$RUNCMD" | tee -a "$WRIT2FILE"
+  else
+    echo "#!/usr/bin/env bash" >>"$WRIT2FILE"
+    echo "$RUNCMD" | tee -a "$WRIT2FILE"
   fi
 }
 
@@ -169,13 +200,32 @@ gendecode() {
       # Again nice work on the awk
       MODNAME="mod-flex$g"
       ARGSF=$(grep "\-X\ " "$tf" | awk -F " " '{print $7}' | awk -F "," -v modname="n=$MODNAME" '{print gensub("n=name", modname, "G")}')
-      IO:log "Flex Decoder String: $ARGSF"
-      if [[ -n "$ARGSF" ]]; then
+      if [[ ${#ARGSF} -gt 6 ]]; then
         JSONFILE="$DECODEFILE-$MODNAME.json"
-        rtl_433 -r "$i" -X "$ARGSF" -F json:"$JSONFILE"
+        RUNCMD="rtl_433 -r $i -X $ARGSF -F json:$JSONFILE"
+        writetosh "$RUNCMD" "$WRIT2FILE"
+        # -----------------------------------------
+        # Below is the bit that doesn't work yet.
+        # Mostly, the rundecoder function.
+        # -----------------------------------------
+        # rundecoder "$i" "$ARGSF" "$JSONFILE"
+        # if rundecoder; then
+        #   IO:log "Decoder ran successfully on: $i"
+        #   ((c++))
+        # else
+        #   IO:log "Module name is: $MODNAME"
+        #   IO:log "Flex Decoder String: $ARGSF"
+        #   IO:log "File to decode is: $i"
+        #   IO:log "Decoder failed miserably on: $i"
+        #   IO:log "File to write results to: $JSONFILE"
+        #   RUNCMD="rtl_433 -r $i -X $ARGSF -F json:$JSONFILE"
+        #   writetosh "$RUNCMD" "$WRIT2FILE"
+        #   IO:log "Command to test is: $RUNCMD"
+        #   ((e++))
+        # fi
       else
-        IO:log "Unable to find flex decoder snippet in ${tf}"
-        ((e++))
+        IO:log "Attempted flex decoder was: $ARGSF"
+        IO:log "Unable to find flex decoder snippet in $tf"
       fi
       ((g++))
     done
@@ -186,7 +236,7 @@ gendecode() {
 }
 
 sigproc() {
-  setoutput "$i"
+  setoutput "$i" "$script";
   gendecode "$i";
   genook "$i";
 }
@@ -202,7 +252,10 @@ function do_proc() {
   # Os:require "convert" "imagemagick"
   # Os:require "IO:progressbar" "basher install pforret/IO:progressbar"
   # (code)
-  # our main loops
+  # our main loop
+  echo "This command is buggy and will generate alot of output!"
+  echo "Press CTRL-c twice to cancel"
+  sleep 5
   # first a set of common file types
   c=0
   e=0
@@ -214,7 +267,34 @@ function do_proc() {
   for i in $($FCMD -t f .cu8 "$input"); do
       echo -ne "$(pdate) $c out of $ttotal files processed with $e errors.\r"
       # Do action
-      sigproc "$i"
+      sigproc "$i" "$script"
+      ((c++))
+      if ! sigproc; then
+        ((e++))
+        IO:log "$i failed";
+      fi
+  done
+  echo "$(pdate) $c out of $ttotal files processed with $e errors."
+  unset c e
+}
+
+function do_decode() {
+  IO:log "Decoding"
+  SCRIPT="$input/rfproc.sh"
+  exec "$SCRIPT"
+  echo "Done!"
+}
+
+function do_convert() {
+  IO:log "Converting to ook"
+  c=0
+  e=0
+  get_find
+  for i in $($FCMD -t f .cu8 "$input"); do
+      echo -ne "$(pdate) $c out of $ttotal files processed with $e errors.\r"
+      # Do action
+      STRING="${i%.cu8}"
+      rtl_433 -w ook:"$STRING.ook" "$i"
       ((c++))
       if ! sigproc; then
         ((e++))
@@ -228,9 +308,15 @@ function do_proc() {
 function do_clean() {
   IO:log "clean"
   # (code)
+  echo "This will remove all ook, txt, sh, and json files from the current directory."
+  echo "Press CTRL-c twice to cancel"
+  echo " You have 10 seconds to cancel."
+  sleep 10
   get_find
   $FCMD -t f -e ook --base-directory "$input" -x rm {}
   $FCMD -t f -e txt --base-directory "$input" -x rm {}
+  $FCMD -t f -e sh --base-directory "$input" -x rm {}
+  $FCMD -t f -e json --base-directory "$input" -x rm {}
   IO:log "Cleaned working directory."
   IO:log "---------------------------------------------"
 }
