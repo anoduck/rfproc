@@ -8,7 +8,7 @@
 
 ### Created by anoduck ( anoduck ) on 2024-03-29
 ### Based on https://github.com/pforret/bashew 1.20.5
-script_version="0.1.2" # if there is a VERSION.md in this script's folder, that will have priority over this version number
+script_version="0.1.3" # if there is a VERSION.md in this script's folder, that will have priority over this version number
 readonly script_author="11767-anoduck@users.noreply.gitgud.io"
 readonly script_created="2024-03-29"
 readonly run_as_root=-1 # run_as_root: 0 = don't check anything / 1 = script MUST run as root / -1 = script MAY NOT run as root
@@ -52,7 +52,7 @@ flag|f|force|do not ask for confirmation (always yes)
 option|l|log_dir|folder for log files |$HOME/log/$script_prefix
 option|t|tmp_dir|folder for temp files|/tmp/$script_prefix
 option|i|input|input folder for processing|$PWD
-option|i|script|name of shell script to write demod commands to|$script_prefix.sh
+option|i|script|name of shell script if demod fails|$script_prefix.sh
 choice|1|action|action to perform|proc,clean,check,env,update
 " -v -e '^#' -e '^\s*$'
 }
@@ -126,6 +126,7 @@ setoutput() {
 	DATE="$(pdate)"
   LABEL="$STRING-$DATE"
 	TXTFILE="$LABEL-"
+  DIRLABEL="$LABEL"
   REVFILE="$LABEL-output.txt"
 	OOKFILE="$LABEL.ook"
   DECODEFILE="$LABEL-decode"
@@ -237,28 +238,36 @@ function do_proc() {
   # Os:require "IO:progressbar" "basher install pforret/IO:progressbar"
   # (code)
   # our main loop
-  echo "This command is buggy and will generate alot of output!"
-  echo "Press CTRL-c twice to cancel"
-  # first a set of common file types
-  c=0
-  e=0
-  # Get a total per file type
-  get_find
-  # ttotal=$(find "$path" -type f -name \*.$mtype | wc -l)
-  ttotal=$($FCMD -t f .cu8 "$input" | wc -l)
-  # then the actual lookup and check
-  for i in $($FCMD -t f .cu8 "$input"); do
-      echo -ne "$(pdate) $c out of $ttotal files processed with $e errors.\r"
-      # Do action
-      sigproc "$i" "$script"
-      ((c++))
-      if ! sigproc; then
-        ((e++))
-        IO:log "$i failed";
-      fi
-  done
-  echo "$(pdate) $c out of $ttotal files processed with $e errors."
-  unset c e
+  if [[ -f "$input" ]]; then
+    echo "Entering single file mode."
+    i="$input"
+    sigproc "$i"
+  elif [[ -d "$input" ]]; then
+    # first a set of common file types
+    c=0
+    e=0
+    # Get a total per file type
+    get_find
+    for ftype in cu8 cs8 cs16 cu16 cs32 cu32; do
+      # ttotal=$(find "$path" -type f -name \*.$mtype | wc -l)
+      ttotal=$($FCMD -t f .$ftype "$input" | wc -l)
+      # then the actual lookup and check
+      for i in $($FCMD -t f .$ftype "$input"); do
+          echo -ne "$(pdate) $c out of $ttotal files processed with $e errors.\r"
+          # Do action
+          sigproc "$i" "$script"
+          ((c++))
+          if ! sigproc; then
+            ((e++))
+            IO:log "$i failed";
+          fi
+      done
+      echo "$(pdate) $c out of $ttotal files processed with $e errors."
+      unset c e
+    done
+  else
+    echo "Please check your input and try again. If this error continues open an issue on github."
+  fi
 }
 
 function do_clean() {
@@ -1200,7 +1209,7 @@ function Os:clean_env() {
       function trim(s) { return rtrim(ltrim(s)); }
       /=/ { # skip lines with no equation
         $0=trim($0);
-        if(substr($0.1.2) != "#"){ # skip comments
+        if(substr($0,1,1) != "#"){ # skip comments
           equal=index($0, "=");
           key=trim(substr($0,1,equal-1));
           val=trim(substr($0,equal+1));
