@@ -8,7 +8,7 @@
 
 ### Created by anoduck ( anoduck ) on 2024-03-29
 ### Based on https://github.com/pforret/bashew 1.20.5
-script_version="0.1.3" # if there is a VERSION.md in this script's folder, that will have priority over this version number
+script_version="0.1.4" # if there is a VERSION.md in this script's folder, that will have priority over this version number
 readonly script_author="11767-anoduck@users.noreply.gitgud.io"
 readonly script_created="2024-03-29"
 readonly run_as_root=-1 # run_as_root: 0 = don't check anything / 1 = script MUST run as root / -1 = script MAY NOT run as root
@@ -53,7 +53,7 @@ option|l|log_dir|folder for log files |$HOME/log/$script_prefix
 option|t|tmp_dir|folder for temp files|/tmp/$script_prefix
 option|i|input|input folder for processing|$PWD
 option|i|script|name of shell script if demod fails|$script_prefix.sh
-choice|1|action|action to perform|proc,clean,check,env,update
+choice|1|action|action to perform|proc,clean,daemon,check,env,update
 " -v -e '^#' -e '^\s*$'
 }
 
@@ -77,6 +77,12 @@ function Script:main() {
       #TIP: Be Careful: «$script_prefix clean» will remove all json, txt, sh, and ook files from $input or $PWD.
       #TIP:> $script_prefix clean
       do_clean
+      ;;
+
+    daemon)
+      #TIP: use <<$script_prefix daemon>> will start rtl_433 as a background process listening to all signals.
+      #TIP:> $script_prefix daemon
+      start_daemon
       ;;
 
     check | env)
@@ -126,11 +132,13 @@ setoutput() {
 	DATE="$(pdate)"
   LABEL="$STRING-$DATE"
 	TXTFILE="$LABEL-"
-  DIRLABEL="$LABEL"
+  #DIRLABEL="$LABEL"
   REVFILE="$LABEL-output.txt"
 	OOKFILE="$LABEL.ook"
   DECODEFILE="$LABEL-decode"
   # WRIT2FILE="$LABEL-$c.sh"
+  # Below LSP will claim the script is not defined, but this is not the case,
+  # it is defined, just LSP cannot find the reference.
   WRIT2FILE="$script"
 }
 
@@ -145,15 +153,18 @@ genook() {
 examfile() {
   # exec 3>&1
   # exec 4>&2
-  REVOUT=$(/usr/local/bin/rtl_433 -A "$i" 2>&1)
+  REVOUT=$(/usr/local/bin/rtl_433 -A -F log -r "$i" 2>&1)
   if [[ -n "$REVOUT" ]]; then
     ACOUNT=$(echo "$REVOUT" | wc -l)
     if [[ $ACOUNT -gt 2 ]]; then
       # Nice work on AWK command
-      echo "$REVOUT" | awk -v TFLE="$TXTFILE" -v RS="" '{
-      f=TFLE NR ".txt"
-      print > f;
-      close(f);
+      # Place conditional rejecting signals considered purely noise
+      echo "$REVOUT" | gawk -v TFLE="$TXTFILE" -v RS="" -e '{
+      if ( $0 !~ /just\snoise/ ) {
+        f=TFLE NR ".txt";
+        print > f;
+        close(f);
+        }
       }' -;
     fi
   else
@@ -196,7 +207,6 @@ gendecode() {
         rundecoder "$i" "$ARGSF" "$JSONFILE"
         if rundecoder; then
           IO:log "Decoder ran successfully on: $i"
-          ((c++))
         else
           IO:log "Module name is: $MODNAME"
           IO:log "Flex Decoder String: $ARGSF"
@@ -219,11 +229,26 @@ gendecode() {
   fi
 }
 
+cleanup() {
+  if [[ -f "$OOKFILE" ]]; then
+    OOKFS=$(cat "$OOKFILE" | wc -c)
+    if [[ "$OOKFS" -lt 1000 ]]; then
+      rm "$OOKFILE"
+    fi
+  fi
+  if [[ ! -s "$JSONFILE" ]]; then
+    rm "$JSONFILE"
+  fi
+}
+
 sigproc() {
   setoutput "$i" "$script";
   gendecode "$i";
-  chmod +x "$WRIT2FILE";
+  if [[ -e "$WRIT2FILE" ]]; then
+    chmod +x "$WRIT2FILE";
+  fi
   genook "$i" "$OOKFILE";
+  cleanup "$JSONFILE" "$OOKFILE"
 }
 
 #####################################################################
@@ -248,23 +273,27 @@ function do_proc() {
     e=0
     # Get a total per file type
     get_find
-    for ftype in cu8 cs8 cs16 cu16 cs32 cu32; do
+    ftype=("cu8" "cs8" "cs16" "cu16" "cs32" "cu32")
+    for z in "${ftype[@]}"; do
       # ttotal=$(find "$path" -type f -name \*.$mtype | wc -l)
-      ttotal=$($FCMD -t f .$ftype "$input" | wc -l)
-      # then the actual lookup and check
-      for i in $($FCMD -t f .$ftype "$input"); do
-          echo -ne "$(pdate) $c out of $ttotal files processed with $e errors.\r"
-          # Do action
-          sigproc "$i" "$script"
-          ((c++))
-          if ! sigproc; then
-            ((e++))
-            IO:log "$i failed";
-          fi
-      done
-      echo "$(pdate) $c out of $ttotal files processed with $e errors."
-      unset c e
+      ttotal=$($FCMD -t f ."$z" "$input" | wc -l)
+      if [[ "$ttotal" -gt 0 ]]; then
+        # then the actual lookup and check
+        for i in $($FCMD -t f ."$z" "$input"); do
+            echo -ne "$(pdate) $c out of $ttotal $z files processed with $e errors.\r"
+            # Do action
+            sigproc "$i" "$script"
+            ((c++))
+            if ! sigproc; then
+              ((e++))
+              IO:log "$i failed";
+            fi
+        done
+      fi
     done
+  echo "$(pdate) $c out of $ttotal files processed with $e errors."
+  unset c
+  unset e
   else
     echo "Please check your input and try again. If this error continues open an issue on github."
   fi
@@ -284,6 +313,13 @@ function do_clean() {
   $FCMD -t f -e json --base-directory "$input" -x rm {}
   IO:log "Cleaned working directory."
   IO:log "---------------------------------------------"
+}
+
+function start_daemon() {
+  IO:log "Starting Daemon"
+  ERROR_LOG="$HOME/log/$script_prefix/$script_prefix-error.log"
+  echo "Starting rtl_433 in the background..."
+  rtl_433 -S all -t biastee=1,digital_agc=1 -R -03 -R -12 -R -186 -R -54 -Y autolevel 2> "$ERROR_LOG"
 }
 # =============================================================================
 #
