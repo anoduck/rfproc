@@ -345,7 +345,7 @@ function start_daemon() {
   IO:log "Starting Daemon"
   ERROR_LOG="$HOME/log/$script_prefix/$script_prefix-error.log"
   echo "Starting rtl_433 in the foreground..."
-  rtl_433 -S all -t digital_agc=1 -C customary -Y autolevel 2> "$ERROR_LOG"
+  rtl_433 -S all 2> "$ERROR_LOG"
 }
 
 function do_pview() {
