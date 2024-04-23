@@ -8,7 +8,7 @@
 
 ### Created by anoduck ( anoduck ) on 2024-03-29
 ### Based on https://github.com/pforret/bashew 1.20.5
-script_version="0.1.4" # if there is a VERSION.md in this script's folder, that will have priority over this version number
+script_version="0.1.5" # if there is a VERSION.md in this script's folder, that will have priority over this version number
 readonly script_author="11767-anoduck@users.noreply.gitgud.io"
 readonly script_created="2024-03-29"
 readonly run_as_root=-1 # run_as_root: 0 = don't check anything / 1 = script MUST run as root / -1 = script MAY NOT run as root
@@ -51,9 +51,9 @@ flag|v|verbose|also show debug messages
 flag|f|force|do not ask for confirmation (always yes)
 option|l|log_dir|folder for log files |$HOME/log/$script_prefix
 option|t|tmp_dir|folder for temp files|/tmp/$script_prefix
-option|i|input|input folder for processing|$PWD
+option|i|input|input file or folder|$PWD
 option|i|script|name of shell script if demod fails|$script_prefix.sh
-choice|1|action|action to perform|proc,clean,daemon,check,env,update
+choice|1|action|action to perform|proc,clean,daemon,pview,check,env,update
 " -v -e '^#' -e '^\s*$'
 }
 
@@ -85,6 +85,13 @@ function Script:main() {
       start_daemon
       ;;
 
+    pview)
+      #TIP: use <<$script_prefix pview $input>> to convert the rtl_433 *.c* file to sigrok and open pulseview.
+      #TIP: You will prompted for the samplerate. Type sample rate without "k". Hit enter for defauilt 250k.
+      #TIP:> $script_prefix pview $input
+      do_pview
+      ;;
+
     check | env)
       ## leave this default action, it will make it easier to test your script
       #TIP: use «$script_prefix check» to check if this script is ready to execute and what values the options/flags are
@@ -114,8 +121,13 @@ function Script:main() {
 ## Put your helper scripts here
 #####################################################################
 function pdate {
-    # my prefered date formatting
+    # my preferred date formatting
     date +%F
+}
+
+ptime() {
+  # my preferred time formatting
+  date +%H%M%S
 }
 
 # Get find ------------------------
@@ -136,6 +148,8 @@ setoutput() {
   REVFILE="$LABEL-output.txt"
 	OOKFILE="$LABEL.ook"
   DECODEFILE="$LABEL-decode"
+  URLFILE="$DATE-URLS.txt"
+  DIRTY=$(mktemp)
   # WRIT2FILE="$LABEL-$c.sh"
   # Below LSP will claim the script is not defined, but this is not the case,
   # it is defined, just LSP cannot find the reference.
@@ -151,21 +165,27 @@ genook() {
 }
 
 examfile() {
-  # exec 3>&1
-  # exec 4>&2
-  REVOUT=$(/usr/local/bin/rtl_433 -A -F log -r "$i" 2>&1)
+  REVOUT=$(/usr/local/bin/rtl_433 -A -C customary -F log -r "$i" 2>&1)
   if [[ -n "$REVOUT" ]]; then
     ACOUNT=$(echo "$REVOUT" | wc -l)
     if [[ $ACOUNT -gt 2 ]]; then
       # Nice work on AWK command
-      # Place conditional rejecting signals considered purely noise
-      echo "$REVOUT" | gawk -v TFLE="$TXTFILE" -v RS="" -e '{
+      echo "$REVOUT" | awk -v UFLE="$URLFILE" -v TFLE="$TXTFILE" -v RS="" -e '{
       if ( $0 !~ /just\snoise/ ) {
         f=TFLE NR ".txt";
         print > f;
         close(f);
         }
-      }' -;
+      }';
+      if [[ -n "$REVOUT" ]]; then
+        if [[ ! -e "$URLFILE" ]]; then
+          touch "$URLFILE"
+          IO:log "Creating url file: $URLFILE"
+        fi
+        echo "$REVOUT" | awk -v UFLE="$DIRTY" -e '/view\sat/ {print $3 >> UFLE}';
+      else
+        IO:log "Analysis output variable is empty."
+      fi
     fi
   else
     ((e++))
@@ -190,7 +210,7 @@ writetosh() {
 }
 
 gendecode() {
-  examfile "$i" "$TXTFILE" "$REVFILE"
+  examfile "$i" "$TXTFILE" "$REVFILE" "$URLFILE"
   g=0
   if examfile; then
     for tf in $($FCMD -t f -e txt --base-directory "$input"); do
@@ -199,7 +219,7 @@ gendecode() {
       ARGSF=$(grep "\-X\ " "$tf" | awk -F " " -v modname="n=$MODNAME" '{f=gensub("n=name", modnam, "G"); print substr($7,2,length($7)-2)}')
       if [[ ${#ARGSF} -gt 6 ]]; then
         JSONFILE="$DECODEFILE-$MODNAME.json"
-        RUNCMD="/usr/local/bin/rtl_433 -r $i -X $ARGSF -F json:$JSONFILE"
+        RUNCMD="/usr/local/bin/rtl_433 -r $i -X $ARGSF -C customary -F json:$JSONFILE"
         # -----------------------------------------
         # Below is the bit that doesn't work yet.
         # Mostly, the rundecoder function.
@@ -230,14 +250,20 @@ gendecode() {
 }
 
 cleanup() {
+  # Clean OOK files less than 1KB
   if [[ -f "$OOKFILE" ]]; then
     OOKFS=$(cat "$OOKFILE" | wc -c)
     if [[ "$OOKFS" -lt 1000 ]]; then
       rm "$OOKFILE"
     fi
   fi
+  # Remove 0 size json files
   if [[ ! -s "$JSONFILE" ]]; then
     rm "$JSONFILE"
+  fi
+  # Deduplicate urlfile
+  if [[ -s "$DIRTY" ]]; then
+    awk '!visited[$0]++' "$DIRTY" >> "$URLFILE"
   fi
 }
 
@@ -248,7 +274,7 @@ sigproc() {
     chmod +x "$WRIT2FILE";
   fi
   genook "$i" "$OOKFILE";
-  cleanup "$JSONFILE" "$OOKFILE"
+  cleanup "$JSONFILE" "$OOKFILE" "$URLFILE"
 }
 
 #####################################################################
@@ -318,8 +344,30 @@ function do_clean() {
 function start_daemon() {
   IO:log "Starting Daemon"
   ERROR_LOG="$HOME/log/$script_prefix/$script_prefix-error.log"
-  echo "Starting rtl_433 in the background..."
-  rtl_433 -S all -t biastee=1,digital_agc=1 -R -03 -R -12 -R -186 -R -54 -Y autolevel 2> "$ERROR_LOG"
+  echo "Starting rtl_433 in the foreground..."
+  rtl_433 -S all -t digital_agc=1 -C customary -Y autolevel 2> "$ERROR_LOG"
+}
+
+function do_pview() {
+  if [[ -f "$input" ]]; then
+    DEFRATE=250
+    echo "What is the sample rate in Kilobytes? (Hit enter for the default 250k.)"
+    read samplerate
+    case "$samplerate" in
+      250) RATE="250k"
+      ;;
+      512) RATE="512k"
+      ;;
+    1024) RATE="1024k"
+      ;;
+    2048) RATE="2048k"
+      ;;
+      *) RATE="$DEFRATE"
+      ;;
+    esac
+    SIGFILE=$(echo "$input" | awk -v FS='.' '{n=$1 "." $2 ".sr";print n}')
+    rtl_433 -W "$SIGFILE" -s "$RATE" -r "$input"
+  fi
 }
 # =============================================================================
 #
