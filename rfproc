@@ -130,6 +130,10 @@ ptime() {
   date +%H%M%S
 }
 
+ddate() {
+  date +%l-%e
+}
+
 # Get find ------------------------
 function get_find {
     if [[ -e $(which fd) ]]; then
@@ -344,16 +348,36 @@ function do_clean() {
 function start_daemon() {
   IO:log "Starting Daemon"
   ERROR_LOG="$HOME/log/$script_prefix/$script_prefix-error.log"
+  CDIR=$(echo "$XDG_CONFIG_DIR")
+  if [[ -z "$CDIR" ]]; then
+    IO:log "XDG_CONFIG_DIR is not defined"
+    echo "You really should set your XDG_CONFIG_DIR. Doing it temporarily for you..."
+    export XDG_CONFIG_DIR="$HOME/.config"
+  fi
   echo "Starting rtl_433 in the foreground..."
-  rtl_433 -S all 2> "$ERROR_LOG"
+  TDATE=$(ddate)
+  echo "Today's date is $TDATE"
+  if [[ ! -d "$TDATE" ]];then
+    mkdir -p "$TDATE" && cd "$_" || return
+  else
+    cd "$TDATE" || return
+  fi
+  CFILE="$XDG_CONFIG_DIR/rtl_433/rtl_433.conf"
+  if [[ -f "$CFILE" ]]; then
+    rtl_433 -c "$CFILE" -S all 2> "$ERROR_LOG"
+  else
+    rtl_433 -S all 2> "$ERROR_LOG"
+  fi
 }
 
 function do_pview() {
   if [[ -f "$input" ]]; then
     DEFRATE=250
-    echo "What is the sample rate in Kilobytes? (Hit enter for the default 250k.)"
+    echo "What is the sample rate in Kilobytes? (Type 0 for the default 250k.)"
     read samplerate
     case "$samplerate" in
+      0) RATE="250K"
+      ;;
       250) RATE="250k"
       ;;
       512) RATE="512k"
