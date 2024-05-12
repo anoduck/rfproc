@@ -15,7 +15,7 @@ readonly run_as_root=-1 # run_as_root: 0 = don't check anything / 1 = script MUS
 readonly script_description="A script to aid processing of rtl_433 generated files"
 ## some initialisation
 action=""
-script_prefix="rfproc"
+script_prefix=""
 script_basename="rtl_433-proc"
 install_package="rtl_433"
 temp_files=()
@@ -53,7 +53,10 @@ option|l|log_dir|folder for log files |$HOME/log/$script_prefix
 option|t|tmp_dir|folder for temp files|/tmp/$script_prefix
 option|i|input|input file or folder|$PWD
 option|i|script|name of shell script if demod fails|$script_prefix.sh
-choice|1|action|action to perform|proc,clean,daemon,pview,check,env,update
+option|u|username|username for influxdb|
+option|p|password|password for influxdb|
+option|d|database|name of influxdb database|
+choice|1|action|action to perform|proc,clean,daemon,influx,pview,check,env,update
 " -v -e '^#' -e '^\s*$'
 }
 
@@ -80,9 +83,16 @@ function Script:main() {
       ;;
 
     daemon)
-      #TIP: use <<$script_prefix daemon>> will start rtl_433 as a background process listening to all signals.
+      #TIP: use <<$script_prefix daemon>> will start rtl_433 as a foreground process where it can monitor listening to all signals.
+      #TIP: Use the rtl_433 config file to customize this process to your tastes.
       #TIP:> $script_prefix daemon
       start_daemon
+      ;;
+
+    influx)
+      #TIP: use <<$script_prefix influx>> will start rtl_433 as a foreground process logging entries to the influxdb.
+      #TIP:> $script_prefix influx
+      start_influx
       ;;
 
     pview)
@@ -131,7 +141,7 @@ ptime() {
 }
 
 ddate() {
-  date +%l-%e
+  date +%m-%e
 }
 
 # Get find ------------------------
@@ -278,7 +288,7 @@ sigproc() {
     chmod +x "$WRIT2FILE";
   fi
   genook "$i" "$OOKFILE";
-  cleanup "$JSONFILE" "$OOKFILE" "$URLFILE"
+  # cleanup "$JSONFILE" "$OOKFILE" "$URLFILE"
 }
 
 #####################################################################
@@ -348,12 +358,11 @@ function do_clean() {
 function start_daemon() {
   IO:log "Starting Daemon"
   ERROR_LOG="$HOME/log/$script_prefix/$script_prefix-error.log"
-  CDIR=$(echo "$XDG_CONFIG_DIR")
-  if [[ -z "$CDIR" ]]; then
-    IO:log "XDG_CONFIG_DIR is not defined"
-    echo "You really should set your XDG_CONFIG_DIR. Doing it temporarily for you..."
-    export XDG_CONFIG_DIR="$HOME/.config"
-  fi
+  # if [[ ! -d "$XDG_CONFIG_DIR" ]]; then
+  #   IO:log "XDG_CONFIG_DIR is not defined"
+  #   echo "You really should set your XDG_CONFIG_DIR. Doing it temporarily for you..."
+  #   export XDG_CONFIG_DIR="$HOME/.config"
+  # fi
   echo "Starting rtl_433 in the foreground..."
   TDATE=$(ddate)
   echo "Today's date is $TDATE"
@@ -362,11 +371,29 @@ function start_daemon() {
   else
     cd "$TDATE" || return
   fi
+  IO:log "Starting the daemon for real this time."
+  echo "Listening"
   CFILE="$XDG_CONFIG_DIR/rtl_433/rtl_433.conf"
   if [[ -f "$CFILE" ]]; then
-    rtl_433 -c "$CFILE" -S all 2> "$ERROR_LOG"
+    IO:log "Running with configuration file"
+    echo "Found Configuration file!"
+    rtl_433 -c "$CFILE" 2>"$ERROR_LOG"
   else
-    rtl_433 -S all 2> "$ERROR_LOG"
+    rtl_433 -S all 2>"$ERROR_LOG"
+  fi
+}
+
+function start_influx() {
+  IO:log "Starting Influx"
+  echo "starting rtl_433 with Influx..."
+  CFILE="$XDG_CONFIG_DIR/rtl_433/rtl_433.conf"
+  INFLUXDB="influx://localhost:8086/write?db=$DB&p=$PASSWD&u=$USER"
+  if [[ -f "$CFILE" ]]; then
+    IO:log "Running with configuration file"
+    echo "Found Config File!"
+    rtl_433 -c "$CFILE" -F "$INFLUXDB" -M time:unix:usec:utc
+  else
+    rtl_433 -S all
   fi
 }
 
