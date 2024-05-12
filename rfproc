@@ -52,7 +52,6 @@ flag|f|force|do not ask for confirmation (always yes)
 option|l|log_dir|folder for log files |$HOME/log/$script_prefix
 option|t|tmp_dir|folder for temp files|/tmp/$script_prefix
 option|i|input|input file or folder|$PWD
-option|i|script|name of shell script if demod fails|$script_prefix.sh
 option|u|username|username for influxdb|
 option|p|password|password for influxdb|
 option|d|database|name of influxdb database|
@@ -167,7 +166,7 @@ setoutput() {
   # WRIT2FILE="$LABEL-$c.sh"
   # Below LSP will claim the script is not defined, but this is not the case,
   # it is defined, just LSP cannot find the reference.
-  WRIT2FILE="$script"
+  WRIT2FILE="decoders.sh"
 }
 
 genook() {
@@ -282,7 +281,7 @@ cleanup() {
 }
 
 sigproc() {
-  setoutput "$i" "$script";
+  setoutput "$i" "decoders.sh";
   gendecode "$i";
   if [[ -e "$WRIT2FILE" ]]; then
     chmod +x "$WRIT2FILE";
@@ -322,7 +321,7 @@ function do_proc() {
         for i in $($FCMD -t f ."$z" "$input"); do
             echo -ne "$(pdate) $c out of $ttotal $z files processed with $e errors.\r"
             # Do action
-            sigproc "$i" "$script"
+            sigproc "$i" "decoder.sh"
             ((c++))
             if ! sigproc; then
               ((e++))
